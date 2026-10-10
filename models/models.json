@@ -1,0 +1,10 @@
+{
+  "nudenet-320n.tflite": {
+    "sha256": "ebb7964f1521ade7206c7aa4eed4a8efcfd08817d79c51fbf111ca4665c3e2d9",
+    "size": 12254472
+  },
+  "yamnet.tflite": {
+    "sha256": "4d8b4a53282dc83ef04e3e7dbc4fbc98082e34e44ed798e16c3a0cdd4c584faf",
+    "size": 4126810
+  }
+}
