@@ -7,7 +7,7 @@
 # private status page.
 #
 # Secrets (Settings → Secrets and variables → Actions):
-#   SOURCE_TOKEN   fine-grained token, eprofdev/mh-iptv only, Contents: Read-only
+#   SOURCE_TOKEN   (or MHIPTV) fine-grained token, eprofdev/mh-iptv only, Contents: Read-only
 #   CF_API_TOKEN   Cloudflare token ("Edit Cloudflare Workers" template)
 #   MASTER_SECRET  the long random string everything secret is derived from
 #   UPDATE_HOST    optional, e.g. tv.example.com
@@ -46,7 +46,7 @@ jobs:
       - name: Check secrets
         id: gate
         env:
-          SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN }}
+          SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN || secrets.MHIPTV }}
         run: |
           missing=""
           [ -n "$SOURCE_TOKEN" ] || missing="$missing SOURCE_TOKEN"
@@ -59,7 +59,7 @@ jobs:
         with:
           repository: eprofdev/mh-iptv
           ref: main
-          token: ${{ secrets.SOURCE_TOKEN }}
+          token: ${{ secrets.SOURCE_TOKEN || secrets.MHIPTV }}
           path: src
           persist-credentials: false
       - uses: actions/setup-java@v4
