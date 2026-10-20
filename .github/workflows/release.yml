@@ -1,0 +1,88 @@
+# قنواتي — يبني التطبيق من المستودع الخاص وينشره على Cloudflare (مجاناً).
+#
+# Free because this repository is public: GitHub Actions costs nothing here.
+# The source stays private: it is checked out with a read-only token and never
+# stored, cached or published here. The log is public, so the build script runs
+# with PUBLIC_LOG=1 (no compiler output, no private links); details go to the
+# private status page.
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   SOURCE_TOKEN   fine-grained token, eprofdev/mh-iptv only, Contents: Read-only
+#   CF_API_TOKEN   Cloudflare token ("Edit Cloudflare Workers" template)
+#   MASTER_SECRET  the long random string everything secret is derived from
+#   UPDATE_HOST    optional, e.g. tv.example.com
+name: Release
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'     # looks for a newer version every 30 minutes
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild and republish even if the version is not newer
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    # Never for forks or pull requests: secrets and the private source stay here.
+    if: github.repository == 'eprofdev/mhtv'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      MASTER_SECRET: ${{ secrets.MASTER_SECRET }}
+      UPDATE_HOST: ${{ secrets.UPDATE_HOST }}
+      FORCE: ${{ inputs.force && '1' || '0' }}
+      PUBLIC_LOG: '1'
+    steps:
+      - name: Check secrets
+        id: gate
+        env:
+          SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN }}
+        run: |
+          missing=""
+          [ -n "$SOURCE_TOKEN" ] || missing="$missing SOURCE_TOKEN"
+          [ -n "$CF_API_TOKEN" ] || missing="$missing CF_API_TOKEN"
+          [ -n "$MASTER_SECRET" ] || missing="$missing MASTER_SECRET"
+          if [ -n "$missing" ]; then echo "::warning::secrets not set:$missing"; echo "go=false" >> "$GITHUB_OUTPUT"
+          else echo "go=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.go == 'true'
+        with:
+          repository: eprofdev/mh-iptv
+          ref: main
+          token: ${{ secrets.SOURCE_TOKEN }}
+          path: src
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        if: steps.gate.outputs.go == 'true'
+        with:
+          distribution: temurin
+          java-version: '17'
+      # Only public inputs are cached (Android SDK, the FFmpeg decoder built from
+      # public sources, downloaded library jars) — never anything compiled from
+      # the private source.
+      - uses: actions/cache@v4
+        if: steps.gate.outputs.go == 'true'
+        with:
+          path: |
+            ~/android-sdk
+            ~/ffmpeg-cache
+            ~/.gradle/wrapper
+            ~/.gradle/caches/modules-2
+          key: release-v1-${{ hashFiles('src/.github/workflows/build.yml', 'src/gradle/libs.versions.toml') }}
+          restore-keys: release-v1-
+      - name: Build, sign and publish to Cloudflare
+        if: steps.gate.outputs.go == 'true'
+        run: bash src/.circleci/release.sh
+      - name: Remove the source and anything compiled from it
+        if: always()
+        run: rm -rf src ~/.gradle/caches/build-cache-* ~/.gradle/caches/transforms-* ~/.gradle/caches/*/kotlin-dsl || true
