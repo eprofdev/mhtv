@@ -14,6 +14,10 @@
 name: Release
 
 on:
+  # Any change to this file (or a push here) starts a run too.
+  push:
+    branches: [main]
+    paths: ['.github/workflows/release.yml']
   schedule:
     - cron: '*/30 * * * *'     # looks for a newer version every 30 minutes
   workflow_dispatch:
