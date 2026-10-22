@@ -1,0 +1,60 @@
+# Screenshots of the app's screens, rendered from the private source with
+# sample data only (ScreensTest seeds made-up channels and lists), for
+# reviewing the design. Published to the `screens` branch of this repository.
+name: Screens
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/screens.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: screens
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  screens:
+    if: github.repository == 'eprofdev/mhtv'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: eprofdev/mh-iptv
+          ref: main
+          token: ${{ secrets.SOURCE_TOKEN || secrets.MHIPTV }}
+          path: src
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/wrapper
+            ~/.gradle/caches/modules-2
+          key: screens-v1-${{ hashFiles('src/gradle/libs.versions.toml') }}
+          restore-keys: screens-v1-
+      - name: Android platform 36
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-36" "build-tools;36.0.0" >/dev/null || true
+      - name: Render screens
+        working-directory: src
+        run: |
+          ./gradlew :app:testDebugUnitTest -Pscreens --tests '*ScreensTest*' --no-daemon --console=plain -q > ../screens.log 2>&1 || {
+            grep -E '^e: |What went wrong|FAILED|Exception' ../screens.log | sed -E 's#(file://)?[^ ]*/app/src/#app/src/#' | head -20 | sed 's/^/::error::/' | cut -c1-300
+            exit 1; }
+          ls app/build/screens/*.png | wc -l
+      - name: Publish to the screens branch
+        run: |
+          mkdir out && cp src/app/build/screens/*.png out/
+          rm -rf src
+          cd out
+          git init -q -b screens
+          git config user.name "ci"; git config user.email "ci@users.noreply.github.com"
+          git add -A && git commit -q -m "screens"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" screens
