@@ -1,0 +1,56 @@
+# قنواتي — collects the app's problem reports from the Cloudflare Worker into the
+# `diag` branch, every hour (and on demand), for the developer to read.
+#
+# The reports are sealed on the TV to the developer's public key; this workflow
+# and this repository only ever hold the sealed bytes. The inbox address is
+# derived from MASTER_SECRET and masked in the log.
+name: Diag
+
+on:
+  schedule:
+    - cron: '7 * * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/diag-trigger']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: diag
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MASTER_SECRET: ${{ secrets.MASTER_SECRET }}
+      STORE: https://qanawati-updates.mohmedhamedm.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Collect sealed reports
+        run: |
+          set -euo pipefail
+          INBOX=$(MS="$MASTER_SECRET" python3 -c 'import hmac,hashlib,os;print(hmac.new(os.environ["MS"].encode(),b"diag-inbox",hashlib.sha256).hexdigest()[:32])')
+          echo "::add-mask::$INBOX"
+          git config user.name "qanawati-reports"
+          git config user.email "reports@users.noreply.github.com"
+          if git ls-remote --exit-code origin diag >/dev/null 2>&1; then
+            git fetch -q --depth 1 origin diag && git checkout -q -B diag FETCH_HEAD
+          else
+            git checkout -q --orphan diag && git rm -rfq . && echo "Sealed problem reports from the app." > README.md && git add README.md
+          fi
+          mkdir -p r
+          new=0
+          for id in $(curl -fsS --retry 3 "$STORE/diag/$INBOX" | jq -r '.[] | "\(.ts)-\(.id)"'); do
+            [ -f "r/$id.bin" ] && continue
+            curl -fsS --retry 3 -o "r/$id.bin" "$STORE/diag/$INBOX/${id#*-}" && new=$((new + 1))
+          done
+          echo "::notice title=reports::$new new"
+          git add r
+          git commit -qm "reports: $new new" || exit 0
+          git push -q origin diag
