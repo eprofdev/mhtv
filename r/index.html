@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss:; frame-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0b1020">
+<title>قنواتي — عن بُعد</title>
+<style>
+:root{--bg:#0b1020;--panel:#141b33;--line:#26304f;--text:#eef1fb;--muted:#9aa4c3;--accent:#4f8cff;--ok:#2ec27e;--warn:#f6c343;--bad:#ff6b6b}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Tahoma,sans-serif}
+body{display:flex;flex-direction:column;min-height:100%}
+header{display:flex;align-items:center;gap:10px;padding:10px 16px;padding-top:max(10px,env(safe-area-inset-top));background:var(--panel);border-bottom:1px solid var(--line)}
+header b{font-size:17px}
+#dot{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none}
+#dot.on{background:var(--ok)} #dot.wait{background:var(--warn)} #dot.off{background:var(--bad)}
+#state{color:var(--muted);font-size:14px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+button{font:inherit;border:0;border-radius:10px;padding:10px 16px;background:var(--accent);color:#fff;cursor:pointer}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--text)}
+button:disabled{opacity:.5}
+#out{padding:8px 12px}
+main{flex:1;display:flex;align-items:center;justify-content:center;padding:16px}
+.card{width:100%;max-width:440px;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:24px;text-align:center}
+.card h1{font-size:20px;margin:0 0 8px}
+.card p{color:var(--muted);margin:8px 0}
+.lock{font-size:40px;line-height:1;margin-bottom:8px}
+#otp{display:block;width:100%;margin:14px 0 10px;padding:12px;font:600 28px/1 ui-monospace,Menlo,Consolas,monospace;letter-spacing:10px;text-align:center;direction:ltr;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:12px}
+#otp:focus{outline:2px solid var(--accent)}
+.msg{min-height:1.6em;margin-top:8px;font-size:14px}
+.msg.bad{color:var(--bad)}
+.small{font-size:13px;color:var(--muted)}
+.spin{width:28px;height:28px;margin:6px auto 12px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:s 1s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+iframe{flex:1;width:100%;border:0;background:#fff;display:none}
+body.app main{display:none}
+body.app iframe{display:block}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <span id="dot"></span>
+  <b>قنواتي</b>
+  <span id="state">عن بُعد</span>
+  <button id="out" class="ghost" hidden>خروج</button>
+</header>
+<main>
+  <div class="card">
+    <div class="lock" aria-hidden="true">🔒</div>
+    <h1 id="title">جارٍ التحميل…</h1>
+    <div id="spin" class="spin"></div>
+    <p id="text"></p>
+    <form id="otpForm" hidden autocomplete="off">
+      <input id="otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" aria-label="رمز Microsoft Authenticator" placeholder="••••••">
+      <button id="otpGo" type="submit">دخول</button>
+    </form>
+    <div id="msg" class="msg"></div>
+    <p><button id="again" hidden>دخول من جديد</button></p>
+    <p id="foot" class="small">الاتصال مشفّر من طرف إلى طرف بين هذا المتصفح والتلفزيون — الخادم الوسيط لا يرى المحتوى.</p>
+  </div>
+</main>
+<iframe id="frame" title="صفحة التحكم" referrerpolicy="no-referrer"></iframe>
+<script src="shell.js"></script>
+</body>
+</html>
