@@ -155,8 +155,10 @@ function end(title, text, again = true) {
   ready = false;
   key = null;
   clearInterval(ping);
-  for (const p of pending.values()) answer(p.port, 503, "انتهت الجلسة.");
+  for (const p of pending.values()) { try { p.port.postMessage({ err: "انتهت الجلسة." }); } catch {} }
   pending.clear();
+  closeRtc();
+  $("tabs").hidden = true;
   $("out").hidden = true;
   try { ws && ws.close(); } catch {}
   ws = null;
@@ -264,9 +266,12 @@ async function connect(pair) {
         ready = true;
         status("متصل — مشفّر", "on");
         $("out").hidden = false;
+        $("tabs").hidden = false;
         document.body.classList.add("app");
-        $("frame").src = BASE + "app/";
+        openTab("app");
         return;
+      case "rtc":
+        return rtcSignal(head);
       case "bye":
         return end("انتهت الجلسة", head.why === "idle" ? "أُقفلت الجلسة بعد 30 دقيقة دون استخدام."
           : head.why === "other" ? "بدأت جلسة أخرى لهذا الجهاز." : "أنهى التلفزيون الجلسة.");
@@ -274,14 +279,11 @@ async function connect(pair) {
       case "rb": {
         const p = pending.get(head.id);
         if (!p) return;
-        if (head.t === "res") { p.s = head.s; p.h = head.h || {}; }
-        p.parts.push(body);
-        if (!head.more) {
-          pending.delete(head.id);
-          clearTimeout(p.timer);
-          const all = cat(...p.parts);
-          p.port.postMessage({ s: p.s, h: p.h, body: all.buffer }, [all.buffer]);
-        }
+        clearTimeout(p.timer);
+        if (head.t === "res") p.port.postMessage({ head: { s: head.s, h: head.h || {} } });
+        if (body.length) { const b = body.slice().buffer; p.port.postMessage({ chunk: b }, [b]); }
+        if (!head.more) { pending.delete(head.id); p.port.postMessage({ end: 1 }); }
+        else p.timer = setTimeout(() => { if (pending.delete(head.id)) p.port.postMessage({ err: "timeout" }); }, 120000);
         return;
       }
     }
@@ -296,15 +298,27 @@ async function connect(pair) {
 
 // ---------------------------------------------------------------- requests from the TV's page (service worker)
 
+// Answers go to the service worker as {head}, {chunk}…, {end}.
 function answer(port, s, text) {
-  const body = te.encode(`<!doctype html><meta charset="utf-8"><body dir="rtl" style="font:16px system-ui;padding:24px">${text}</body>`);
-  port.postMessage({ s, h: { "content-type": "text/html; charset=utf-8" }, body: body.buffer }, [body.buffer]);
+  const body = te.encode(`<!doctype html><meta charset="utf-8"><body dir="rtl" style="font:16px system-ui;padding:24px;color:#eef1fb;background:#0b1020">${text}</body>`);
+  try {
+    port.postMessage({ head: { s, h: { "content-type": "text/html; charset=utf-8" } } });
+    port.postMessage({ chunk: body.buffer }, [body.buffer]);
+    port.postMessage({ end: 1 });
+  } catch {}
 }
 
-async function onRequest(port, req) {
+function onRequest(port, req) {
   if (!ready || !key) return answer(port, 503, "الجلسة غير مفتوحة.");
+  // Video of the watch page takes the direct path; everything else the encrypted session.
+  if (req.scope === "watch" && /^\/(p|hls)\//.test(req.p)) return video(port, req);
+  return relayed(port, req);
+}
+
+async function relayed(port, req) {
+  port.onmessage = () => {};   // pulls need nothing: the TV sends the whole answer
   const id = nextId++;
-  const p = { port, parts: [], s: 502, h: {} };
+  const p = { port, started: false };
   p.timer = setTimeout(() => { if (pending.delete(id)) answer(port, 504, "لم يرد التلفزيون في الوقت المحدد."); }, 120000);
   pending.set(id, p);
   const body = req.body ? new Uint8Array(req.body) : new Uint8Array(0);
@@ -313,8 +327,129 @@ async function onRequest(port, req) {
     const part = body.subarray(off, off + CHUNK);
     off += part.length;
     const more = off < body.length;
-    await sendSecure(off <= CHUNK ? { t: "req", id, m: req.m, p: req.p, ct: req.ct || null, more } : { t: "rb", id, more }, part);
+    await sendSecure(off <= CHUNK ? { t: "req", id, m: req.m, p: req.p, ct: req.ct || null, to: req.scope === "watch" ? "w" : "c", more } : { t: "rb", id, more }, part);
   } while (off < body.length);
+}
+
+// ---------------------------------------------------------------- tabs
+
+function openTab(name) {
+  for (const b of document.querySelectorAll("#tabs button")) b.className = b.dataset.t === name ? "on" : "";
+  $("frame").src = BASE + name + "/";
+  if (name === "watch") { if (rtcState === "failed") closeRtc(); ensureRtc(); }
+}
+
+// ---------------------------------------------------------------- video: the direct WebRTC path
+//
+// A data channel straight to the TV, set up inside the encrypted session (so
+// its DTLS keys are vouched for by it). Frames: [type][id: 4][payload] —
+// 1 request, 5 cancel, 7 credit from here; 2 head, 3 data, 4 end, 6 error back.
+
+let pc = null, dc = null, rtcState = "idle", rtcWaiters = [];
+const videos = new Map();
+const CREDIT = 512 * 1024;
+
+function rtcSettle(state) {
+  rtcState = state;
+  const w = rtcWaiters.splice(0);
+  w.forEach((f) => f(state));
+  $("vpath").textContent = state === "open" ? "الفيديو: اتصال مباشر ✓" : state === "failed" ? "الفيديو: تعذّر الاتصال المباشر" : "";
+}
+
+function rtcReady() {
+  if (rtcState === "open" || rtcState === "failed") return Promise.resolve(rtcState);
+  ensureRtc();
+  return new Promise((res) => {
+    rtcWaiters.push(res);
+    setTimeout(() => { if (rtcState === "connecting") { rtcSettle("failed"); } }, 20000);
+  });
+}
+
+async function ensureRtc() {
+  if (pc || !key) return;
+  rtcState = "connecting";
+  try {
+    pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.cloudflare.com:3478" }, { urls: "stun:stun.l.google.com:19302" }] });
+  } catch { return rtcSettle("failed"); }
+  dc = pc.createDataChannel("v", { ordered: true });
+  dc.binaryType = "arraybuffer";
+  dc.onopen = () => rtcSettle("open");
+  dc.onclose = () => {
+    for (const v of videos.values()) { try { v.port.postMessage({ err: "closed" }); } catch {} }
+    videos.clear();
+    if (rtcState === "open") { pc = null; dc = null; rtcState = "idle"; $("vpath").textContent = ""; }
+  };
+  dc.onmessage = (e) => onVideo(e.data);
+  pc.onicecandidate = (e) => { if (e.candidate) sendSecure({ t: "rtc", ice: e.candidate.toJSON() }); };
+  pc.onconnectionstatechange = () => { if (pc && pc.connectionState === "failed") rtcSettle("failed"); };
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  sendSecure({ t: "rtc", offer: offer.sdp });
+}
+
+async function rtcSignal(m) {
+  if (!pc) return;
+  try {
+    if (m.answer) await pc.setRemoteDescription({ type: "answer", sdp: m.answer });
+    else if (m.ice) await pc.addIceCandidate(m.ice);
+  } catch {}
+}
+
+function closeRtc() {
+  for (const v of videos.values()) { try { v.port.postMessage({ err: "closed" }); } catch {} }
+  videos.clear();
+  try { dc && dc.close(); } catch {}
+  try { pc && pc.close(); } catch {}
+  pc = null; dc = null; rtcState = "idle";
+  rtcSettle("idle");
+}
+
+function vframe(type, id, payload) {
+  const p = payload || new Uint8Array(0);
+  const f = new Uint8Array(5 + p.length);
+  f[0] = type; new DataView(f.buffer).setUint32(1, id); f.set(p, 5);
+  return f;
+}
+
+async function video(port, req) {
+  const state = await rtcReady();
+  if (state !== "open" || !dc || dc.readyState !== "open") {
+    return answer(port, 503, "تعذّر الاتصال المباشر بالتلفزيون: إحدى الشبكتين تمنع الاتصال المباشر (شائع في بيانات الجوال). جرّب شبكة Wi-Fi أخرى.");
+  }
+  const id = nextId++;
+  videos.set(id, { port });
+  port.onmessage = (m) => {
+    const d = m.data || {};
+    if (!videos.has(id) || !dc || dc.readyState !== "open") return;
+    if (d.pull) { const c = new Uint8Array(4); new DataView(c.buffer).setUint32(0, CREDIT); dc.send(vframe(7, id, c)); }
+    if (d.cancel) { videos.delete(id); dc.send(vframe(5, id)); }
+  };
+  const ask = { m: req.m, p: req.p, h: req.range ? { range: req.range } : {} };
+  dc.send(vframe(1, id, te.encode(JSON.stringify(ask))));
+}
+
+function onVideo(buf) {
+  const u = new Uint8Array(buf);
+  if (u.length < 5) return;
+  const id = new DataView(buf).getUint32(1);
+  const v = videos.get(id);
+  if (!v) return;
+  const payload = u.subarray(5);
+  switch (u[0]) {
+    case 2: {
+      const h = JSON.parse(td.decode(payload));
+      v.port.postMessage({ head: { s: h.s, h: h.h || {} } });
+      return;
+    }
+    case 3: { const b = payload.slice().buffer; v.port.postMessage({ chunk: b }, [b]); return; }
+    case 4: videos.delete(id); v.port.postMessage({ end: 1 }); return;
+    case 6: {
+      videos.delete(id);
+      const why = td.decode(payload);
+      v.port.postMessage({ err: why === "watch-off" ? "المشاهدة من المتصفح متوقفة على التلفزيون — فعّلها من الإعدادات." : "تعذّر جلب الفيديو من التلفزيون." });
+      return;
+    }
+  }
 }
 
 // ---------------------------------------------------------------- start
@@ -334,6 +469,7 @@ async function start() {
   }
 
   $("out").onclick = logout;
+  for (const b of document.querySelectorAll("#tabs button")) b.onclick = () => openTab(b.dataset.t);
   $("again").onclick = () => { if (link) connect(null); else location.reload(); };
   $("otpForm").onsubmit = (e) => {
     e.preventDefault();

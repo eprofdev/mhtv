@@ -37,6 +37,12 @@ main{flex:1;display:flex;align-items:center;justify-content:center;padding:16px}
 iframe{flex:1;width:100%;border:0;background:#fff;display:none}
 body.app main{display:none}
 body.app iframe{display:block}
+#tabs{display:flex;gap:4px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:3px}
+#tabs button{padding:6px 12px;border-radius:8px;background:transparent;color:var(--muted);font-size:14px}
+#tabs button.on{background:var(--accent);color:#fff}
+#vpath{padding:0 16px;background:var(--panel)}
+#vpath:empty{display:none}
+@media (max-width:420px){header b{display:none} #state{font-size:12px}}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -45,6 +51,7 @@ body.app iframe{display:block}
   <span id="dot"></span>
   <b>قنواتي</b>
   <span id="state">عن بُعد</span>
+  <nav id="tabs" hidden><button data-t="app" class="on">التحكم</button><button data-t="watch">المشاهدة</button></nav>
   <button id="out" class="ghost" hidden>خروج</button>
 </header>
 <main>
@@ -62,7 +69,8 @@ body.app iframe{display:block}
     <p id="foot" class="small">الاتصال مشفّر من طرف إلى طرف بين هذا المتصفح والتلفزيون — الخادم الوسيط لا يرى المحتوى.</p>
   </div>
 </main>
-<iframe id="frame" title="صفحة التحكم" referrerpolicy="no-referrer"></iframe>
+<div id="vpath" class="small" aria-live="polite"></div>
+<iframe id="frame" allow="fullscreen; autoplay; picture-in-picture" allowfullscreen title="صفحة التحكم" referrerpolicy="no-referrer"></iframe>
 <script src="shell.js"></script>
 </body>
 </html>
