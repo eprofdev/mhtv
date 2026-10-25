@@ -12,7 +12,7 @@
 #   MASTER_SECRET  the long random string everything secret is derived from
 #   UPDATE_HOST    optional, e.g. tv.example.com
 name: Release
-# run: 26
+# run: 27
 
 on:
   # Any change to this file (or a push here) starts a run too.
